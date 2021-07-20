@@ -7,9 +7,14 @@ import "./libs/SafeBEP20.sol";
 import "./libs/SafeMath.sol";
 import "./libs/Ownable.sol";
 import "./libs/ReentrancyGuard.sol";
+import "./wSafe/IFoodcourtRewardToken.sol";
 
 interface IMintableERC20 is IBEP20 {
     function mint(address _to, uint256 _amount) external;
+}
+
+interface ITransferable {
+    function transfer(address to, uint256 amount) external returns(bool);
 }
 
 // Cafeteria is the master of Coupon. He can make Coupon and he is a fair guy.
@@ -48,11 +53,12 @@ contract Cafeteria is Ownable, ReentrancyGuard {
         uint256 lastRewardBlock;  // Last block number that COUPONs distribution occurs.
         uint256 accCouponPerShare;   // Accumulated COUPONs per share, times 1e12. See below.
         uint16 depositFeeBP;      // Deposit fee in basis points
-        bool withdrawFee100;      // Deposit fee in basis points
+        bool isRewardToken;      // Deposit fee in basis points
     }
 
     // The Coupon TOKEN!
     IMintableERC20 public coupon;
+    address public reserver;
     // Dev address.
     address public devaddr;
     // Coupon tokens created per block.
@@ -83,13 +89,15 @@ contract Cafeteria is Ownable, ReentrancyGuard {
         address _devaddr,
         address _feeAddress,
         uint256 _couponPerBlock,
-        uint256 _startBlock
+        uint256 _startBlock,
+        address _reserver
     ) public {
         coupon = IMintableERC20(_coupon);
         devaddr = _devaddr;
         feeAddress = _feeAddress;
         couponPerBlock = _couponPerBlock;
         startBlock = _startBlock;
+        reserver = _reserver;
     }
 
     function poolLength() external view returns (uint256) {
@@ -103,11 +111,14 @@ contract Cafeteria is Ownable, ReentrancyGuard {
     }
 
     // Add a new lp to the pool. Can only be called by the owner.
-    function add(uint256 _allocPoint, IBEP20 _lpToken, uint16 _depositFeeBP, bool _withdrawFee100, bool _withUpdate) public onlyOwner nonDuplicated(_lpToken) {
+    function add(uint256 _allocPoint, IBEP20 _lpToken, uint16 _depositFeeBP, bool _isRewardToken, bool _withUpdate) external onlyOwner nonDuplicated(_lpToken) {
         require(_depositFeeBP <= 10000, "invalid deposit fee basis points");
+        require(!_isRewardToken || IFoodcourtRewardToken(address(_lpToken)).isFoodcourtRewardToken(), "Not allowed");
+
         if (_withUpdate) {
             massUpdatePools();
         }
+
         uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
         totalAllocPoint = totalAllocPoint.add(_allocPoint);
         poolExistence[_lpToken] = true;
@@ -117,13 +128,14 @@ contract Cafeteria is Ownable, ReentrancyGuard {
             lastRewardBlock: lastRewardBlock,
             accCouponPerShare: 0,
             depositFeeBP: _depositFeeBP,
-            withdrawFee100: _withdrawFee100
+            isRewardToken: _isRewardToken
         }));
     }
 
     // Update the given pool's Coupon allocation point and deposit fee. Can only be called by the owner.
-    function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, bool _withUpdate) public onlyOwner {
+    function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, bool _isRewardToken, bool _withUpdate) external onlyOwner {
         require(_depositFeeBP <= 10000, "invalid deposit fee basis points");
+        require(!_isRewardToken || IFoodcourtRewardToken(address(poolInfo[_pid].lpToken)).isFoodcourtRewardToken(), "Not allowed");
 
         if (_withUpdate) {
             massUpdatePools();
@@ -132,13 +144,7 @@ contract Cafeteria is Ownable, ReentrancyGuard {
         totalAllocPoint = totalAllocPoint.sub(poolInfo[_pid].allocPoint).add(_allocPoint);
         poolInfo[_pid].allocPoint = _allocPoint;
         poolInfo[_pid].depositFeeBP = _depositFeeBP;
-
-        // For emergency fix of 100% withdrawal fee
-        if (_allocPoint == 0) {
-            poolExistence[poolInfo[_pid].lpToken] = false;
-        } else {
-            poolExistence[poolInfo[_pid].lpToken] = true;
-        }
+        poolInfo[_pid].isRewardToken = _isRewardToken;
     }
 
     // Return reward multiplier over the given _from to _to block.
@@ -182,20 +188,20 @@ contract Cafeteria is Ownable, ReentrancyGuard {
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
         uint256 couponReward = multiplier.mul(couponPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
         coupon.mint(devaddr, couponReward.div(10));
-        coupon.mint(address(this), couponReward);
+        coupon.mint(reserver, couponReward);
         pool.accCouponPerShare = pool.accCouponPerShare.add(couponReward.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.number;
     }
 
     // Deposit LP tokens to Cafeteria for Coupon allocation.
-    function deposit(uint256 _pid, uint256 _amount) public nonReentrant {
+    function deposit(uint256 _pid, uint256 _amount) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         updatePool(_pid);
 
         uint256 pending = user.amount.mul(pool.accCouponPerShare).div(1e12).sub(user.rewardDebt) + user.lockedReward;
         if (pending > 0) {
-            if (_amount == 0 || !pool.withdrawFee100) {
+            if (_amount == 0 || !pool.isRewardToken) {
                 safeCouponTransfer(msg.sender, pending);
                 user.lockedReward = 0;
             } else {
@@ -212,8 +218,8 @@ contract Cafeteria is Ownable, ReentrancyGuard {
             } else {
                 user.amount = user.amount.add(_amount);
             }
-        } else if (pool.withdrawFee100){
-            pool.lpToken.safeTransfer(feeAddress, user.amount);
+        } else if (pool.isRewardToken){
+            pool.lpToken.safeTransfer(0x000000000000000000000000000000000000dEaD, user.amount);
             user.amount = 0;
         }
         user.rewardDebt = user.amount.mul(pool.accCouponPerShare).div(1e12);
@@ -221,11 +227,11 @@ contract Cafeteria is Ownable, ReentrancyGuard {
     }
 
     // Withdraw LP tokens from Cafeteria.
-    function withdraw(uint256 _pid, uint256 _amount) public nonReentrant {
+    function withdraw(uint256 _pid, uint256 _amount) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         require(user.amount >= _amount, "invalid amount");
-        require(!pool.withdrawFee100, "harvest only");
+        require(!pool.isRewardToken, "harvest only");
         updatePool(_pid);
         uint256 pending = user.amount.mul(pool.accCouponPerShare).div(1e12).sub(user.rewardDebt) + user.lockedReward;
         if (pending > 0) {
@@ -241,8 +247,9 @@ contract Cafeteria is Ownable, ReentrancyGuard {
     }
 
     // Withdraw without caring about rewards. EMERGENCY ONLY.
-    function emergencyWithdraw(uint256 _pid) public nonReentrant {
+    function emergencyWithdraw(uint256 _pid) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
+        require(!pool.isRewardToken, "harvest only");
         UserInfo storage user = userInfo[_pid][msg.sender];
         uint256 amount = user.amount;
         user.amount = 0;
@@ -257,28 +264,28 @@ contract Cafeteria is Ownable, ReentrancyGuard {
         uint256 couponBal = coupon.balanceOf(address(this));
         bool transferSuccess = false;
         if (_amount > couponBal) {
-            transferSuccess = coupon.transfer(_to, couponBal);
+            transferSuccess = ITransferable(reserver).transfer(_to, couponBal);
         } else {
-            transferSuccess = coupon.transfer(_to, _amount);
+            transferSuccess = ITransferable(reserver).transfer(_to, _amount);
         }
         require(transferSuccess, "transfer failed");
     }
 
     // Update dev address by the previous dev.
-    function dev(address _devaddr) public {
+    function dev(address _devaddr) external {
         require(msg.sender == devaddr, "dev: wut?");
         devaddr = _devaddr;
         emit SetDevAddress(msg.sender, _devaddr);
     }
 
-    function setFeeAddress(address _feeAddress) public {
+    function setFeeAddress(address _feeAddress) external {
         require(msg.sender == feeAddress, "nope");
         feeAddress = _feeAddress;
         emit SetFeeAddress(msg.sender, _feeAddress);
     }
 
     // Foodcourt has to add hidden dummy pools inorder to alter the emission, here we make it simple and transparent to all.
-    function updateEmissionRate(uint256 _couponPerBlock) public onlyOwner {
+    function updateEmissionRate(uint256 _couponPerBlock) external onlyOwner {
         massUpdatePools();
         couponPerBlock = _couponPerBlock;
         emit UpdateEmissionRate(msg.sender, _couponPerBlock);

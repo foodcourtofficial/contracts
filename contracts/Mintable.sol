@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity 0.8.6;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -22,13 +22,13 @@ abstract contract Mintable is Ownable {
     mapping(address => MinterData) public allowMinting;
     mapping(address => mapping(uint256 => uint256)) public dailyMint;
 
-    function setMinterTimelock(uint256 _duration) public onlyOwner {
+    function setMinterTimelock(uint256 _duration) external onlyOwner {
         require(_duration > minterTimelock, "Must be longer lock");
         emit SetMinterTimelock(_msgSender(), minterTimelock, _duration);
         minterTimelock = _duration;
     }
 
-    function setAllowMinting(address _address, bool _allowed) public onlyOwner {
+    function setAllowMinting(address _address, bool _allowed) external onlyOwner {
         if (_allowed) {
             allowMinting[_address].allowed = true;
             allowMinting[_address].timelock = block.timestamp + minterTimelock;
@@ -40,7 +40,7 @@ abstract contract Mintable is Ownable {
         emit AllowMinter(_msgSender(), _address, _allowed);
     }
 
-    function setDailyMintLimit(address _address, uint256 _limit) public onlyOwner {
+    function setDailyMintLimit(address _address, uint256 _limit) external onlyOwner {
         emit SetDailyMintLimit(_msgSender(), allowMinting[_address].dailyLimit, _limit);
         allowMinting[_address].dailyLimit = _limit;
     }

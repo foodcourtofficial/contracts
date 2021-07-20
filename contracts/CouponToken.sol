@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity 0.8.6;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -13,7 +13,7 @@ contract CouponToken is ERC20, ERC20Burnable, Ownable, Mintable {
 
     constructor() ERC20('Foodcourt Coupon', 'COUPON') {}
 
-    function mint(address _to, uint256 _amount) public onlyMinter {
+    function mint(address _to, uint256 _amount) external onlyMinter {
         increaseMint(_amount);
         _mint(_to, _amount);
     }
