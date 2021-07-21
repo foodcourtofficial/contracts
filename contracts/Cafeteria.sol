@@ -111,13 +111,11 @@ contract Cafeteria is Ownable, ReentrancyGuard {
     }
 
     // Add a new lp to the pool. Can only be called by the owner.
-    function add(uint256 _allocPoint, IBEP20 _lpToken, uint16 _depositFeeBP, bool _isRewardToken, bool _withUpdate) external onlyOwner nonDuplicated(_lpToken) {
+    function add(uint256 _allocPoint, IBEP20 _lpToken, uint16 _depositFeeBP, bool _isRewardToken) external onlyOwner nonDuplicated(_lpToken) {
         require(_depositFeeBP <= 10000, "invalid deposit fee basis points");
         require(!_isRewardToken || IFoodcourtRewardToken(address(_lpToken)).isFoodcourtRewardToken(), "Not allowed");
 
-        if (_withUpdate) {
-            massUpdatePools();
-        }
+        massUpdatePools();
 
         uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
         totalAllocPoint = totalAllocPoint.add(_allocPoint);
@@ -133,13 +131,11 @@ contract Cafeteria is Ownable, ReentrancyGuard {
     }
 
     // Update the given pool's Coupon allocation point and deposit fee. Can only be called by the owner.
-    function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, bool _isRewardToken, bool _withUpdate) external onlyOwner {
+    function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, bool _isRewardToken) external onlyOwner {
         require(_depositFeeBP <= 10000, "invalid deposit fee basis points");
         require(!_isRewardToken || IFoodcourtRewardToken(address(poolInfo[_pid].lpToken)).isFoodcourtRewardToken(), "Not allowed");
 
-        if (_withUpdate) {
-            massUpdatePools();
-        }
+        massUpdatePools();
 
         totalAllocPoint = totalAllocPoint.sub(poolInfo[_pid].allocPoint).add(_allocPoint);
         poolInfo[_pid].allocPoint = _allocPoint;
